@@ -1,6 +1,10 @@
 import pandas as pd
 import numpy as np
 from collections import Counter
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def euclidean_distance(x1, x2):
     return np.sqrt(np.sum((x1 - x2) ** 2))
@@ -21,24 +25,8 @@ class KNN:
         distances = [euclidean_distance(x, x_train) for x_train in self.X_train]
         k_indices = np.argsort(distances)[:self.k]
         k_nearest_labels = [self.y_train[i] for i in k_indices]
-        most_common = Counter(k_nearest_labels).most_common()
-        
-        if not most_common:
-            return self.y_train[np.argmin(distances)]  # Return the label of the single nearest neighbor
-        if len(most_common) == 1 or most_common[0][1] > most_common[1][1]:
-            return most_common[0][0]  # Clear winner
-        else:
-            # Tie-breaking: choose the label of the nearest neighbor among tied classes
-            tied_labels = [label for label, count in most_common if count == most_common[0][1]]
-            for i in k_indices:
-                if self.y_train[i] in tied_labels:
-                    return self.y_train[i]
-    
-    def _predict(self, x):
-        distances = [euclidean_distance(x, x_train) for x_train in self.X_train]
-        k_indices = np.argsort(distances)[:self.k]
-        k_nearest_labels = [self.y_train[i] for i in k_indices]
         most_common = Counter(k_nearest_labels).most_common(1)
+        logging.debug(f"K nearest labels: {k_nearest_labels}, Most common: {most_common}")
         return most_common[0][0] if most_common else None
 
 def custom_kfold(n_splits, n_samples):
@@ -59,43 +47,34 @@ def custom_scale(X):
     return (X - mean) / std
 
 def calculate_accuracy(y_true, y_pred):
-    return np.mean(y_true == y_pred)
+    if len(y_true) == 0 or len(y_pred) == 0:
+        logging.error(f"Empty array in accuracy calculation. y_true: {len(y_true)}, y_pred: {len(y_pred)}")
+        return np.nan
+    accuracy = np.mean(y_true == y_pred)
+    logging.debug(f"Accuracy calculation - y_true: {y_true[:5]}, y_pred: {y_pred[:5]}")
+    logging.debug(f"Calculated accuracy: {accuracy}")
+    if np.isnan(accuracy):
+        logging.warning(f"NaN accuracy detected. y_true shape: {y_true.shape}, y_pred shape: {y_pred.shape}")
+        logging.warning(f"y_true sample: {y_true[:5]}, y_pred sample: {y_pred[:5]}")
+    return accuracy
 
-# Load the Pokemon dataset
+# Load and prepare data
 data = pd.read_csv('pokemon.csv')
-
-print("Dataset shape:", data.shape)
-print("\nSample of the first few rows:")
-print(data.head())
-
-# Select features and target
 features = ['hp', 'attack', 'defense', 'sp_attack', 'sp_defense']
 target_column = 'type1'
-
-print(f"\nUsing features: {features}")
-print(f"Using target column: {target_column}")
-
-# Check if all required columns are present
-missing_columns = [col for col in features + [target_column] if col not in data.columns]
-if missing_columns:
-    raise ValueError(f"Missing columns in the dataset: {missing_columns}")
 
 X = data[features].values
 y = data[target_column].values
 
-print("\nFeature statistics:")
-print(pd.DataFrame(X, columns=features).describe())
-
-print("\nUnique target values:", np.unique(y))
+logging.info(f"Dataset shape: {X.shape}")
+logging.info(f"Features: {features}")
+logging.info(f"Target column: {target_column}")
 
 # Encode target values
 target_encoder = {value: index for index, value in enumerate(np.unique(y))}
-target_decoder = {index: value for value, index in target_encoder.items()}
 y_encoded = np.array([target_encoder[value] for value in y])
 
-print("\nTarget encoding:")
-for value, index in target_encoder.items():
-    print(f"{value}: {index}")
+logging.info(f"Unique target values: {list(target_encoder.keys())}")
 
 # Initialize KFold
 n_splits = 10
@@ -108,14 +87,19 @@ for k in k_values:
     accuracies = []
     accuracies_scaled = []
     
-    for train_index, test_index in kf:
+    logging.info(f"\nStarting calculations for k = {k}")
+    
+    for fold, (train_index, test_index) in enumerate(kf):
         X_train, X_test = X[train_index], X[test_index]
         y_train, y_test = y_encoded[train_index], y_encoded[test_index]
+        
+        logging.debug(f"Fold {fold + 1}, Train set shape: {X_train.shape}, Test set shape: {X_test.shape}")
         
         # Unscaled data
         knn = KNN(k=k)
         knn.fit(X_train, y_train)
         y_pred = knn.predict(X_test)
+        logging.debug(f"Unscaled - y_pred shape: {y_pred.shape}, y_test shape: {y_test.shape}")
         accuracy = calculate_accuracy(y_test, y_pred)
         accuracies.append(accuracy)
         
@@ -126,18 +110,19 @@ for k in k_values:
         knn_scaled = KNN(k=k)
         knn_scaled.fit(X_train_scaled, y_train)
         y_pred_scaled = knn_scaled.predict(X_test_scaled)
+        logging.debug(f"Scaled - y_pred shape: {y_pred_scaled.shape}, y_test shape: {y_test.shape}")
         accuracy_scaled = calculate_accuracy(y_test, y_pred_scaled)
         accuracies_scaled.append(accuracy_scaled)
     
-    print(f"\nk = {k}")
-    print(f"Average accuracy (unscaled): {np.mean(accuracies):.4f}")
-    print(f"Average accuracy (scaled): {np.mean(accuracies_scaled):.4f}")
+    logging.info(f"k = {k}")
+    logging.info(f"Average accuracy (unscaled): {np.mean(accuracies):.4f}")
+    logging.info(f"Average accuracy (scaled): {np.mean(accuracies_scaled):.4f}")
 
 # Example predictions
-print("\nExample predictions:")
+logging.info("\nExample predictions:")
 knn = KNN(k=5)
 knn.fit(X, y_encoded)
 example_pokemon = X[:5]
 predictions = knn.predict(example_pokemon)
 for i, pred in enumerate(predictions):
-    print(f"Pokemon {i+1}: Predicted type: {target_decoder[pred]}, Actual type: {y[i]}")
+    logging.info(f"Pokemon {i+1}: Predicted type: {list(target_encoder.keys())[list(target_encoder.values()).index(pred)]}, Actual type: {y[i]}")
